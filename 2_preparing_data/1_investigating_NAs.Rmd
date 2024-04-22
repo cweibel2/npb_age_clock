@@ -1,0 +1,206 @@
+---
+title: "Investigating NAs"
+author: "Chelsea Weibel"
+date: "4/17/2024"
+output:
+  html_document:
+    theme: sandstone
+    highlight: tango
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages
+```{r}
+library(tidyverse)
+library(naniar)
+library(visdat)
+```
+
+# Loading data
+```{r}
+traits <- read_csv("../1_data/traits.csv")
+```
+
+# Evaluating NAs
+
+## Number of NAs per row
+```{r}
+traits$na_count <- apply(is.na(traits), 1, sum)
+
+
+traits %>% 
+  ggplot() +
+  geom_histogram(aes(x=na_count), binwidth = 1) +
+  theme_bw()
+# going to use 34 as a cutoff point
+```
+
+## Removing rows with lots of NAs
+```{r}
+# for now, we want to keep individuals' last years of data
+# but we end up removing these later on
+
+traits <- traits %>% 
+  mutate(yol = ifelse(end_date >= statdate, "final", "not_final")) %>% 
+# filtering for last yol or rows with < 34 nas
+  filter(yol == "final" | na_count < 34)
+# now at 2470 (removed 807 rows)
+```
+
+
+## Figure S1 Inset
+```{r}
+nas_plot <- traits %>% 
+  filter(na_count < 34) %>% # excluding final yol because we drop them later
+  ggplot() +
+  geom_histogram(aes(x=na_count), binwidth = 1) +
+  theme_bw(base_size = 16) +
+  ylab("Number of female-years of life") +
+  xlab("Number of traits missing")
+
+nas_plot
+```
+
+## How many cells were missing? (before backfill)
+```{r}
+missing_cells_before_backfill <- traits %>% 
+  filter(na_count < 34)
+
+n_missing_cells_before_backfill <- sum(is.na(missing_cells_before_backfill))
+total_cells <- 2402 * 49
+
+n_missing_cells_before_backfill/total_cells
+```
+
+## Number of NAs per trait
+```{r}
+# used for Table S4
+
+missing_per_col <- missing_cells_before_backfill %>%
+  ungroup() %>% 
+  select(per_groom_resid, ni_per_forage_resid, ni_per_groom_resid, per_no_neighbors_resid, ni_per_no_neighbors_resid, ni_per_other_soc_resid, ni_per_rest_resid, 
+         avg_resid_log_e, avg_resid_log_gc, avg_resid_log_p, avg_resid_log_th,
+         limp_cat, major_health_event_cat, puncture_cat,
+         avg_richness_resid, avg_log_trichuris_resid,
+         avg_log_cycling_resid, any_off_survive, avg_preg_resid, any_misc,
+         per_kc_away_none_resid, per_be_groomed_infant_resid, per_ks_suckle_resid, per_kc_support_resid, per_kc_dorsal_resid, per_kc_ventral_resid,
+         eigen_resid, not_bonded_f_resid, not_bonded_m_resid, strongly_bonded_f_resid, total_grooming_partners_f_resid, total_grooming_partners_resid, weakly_bonded_f_resid, sci_f_resid, sci_f_dir_resid, sci_m_dir_resid, sci_f_rec_resid, sci_m_rec_resid,
+         dsi_f_resid, recip_f_resid, recip_m_resid,
+         agi_f_resid, agi_m_resid, agi_f_dir_resid, agi_f_rec_resid, agi_m_rec_resid,
+         cat_abs_active_rank_change, rank_rel_any_daughter, avg_mom_rel_rank)  %>% 
+  summarise_all(funs(sum(is.na(.)))) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  mutate(per = round((V1/2402)*100, 2)) %>% 
+  mutate(lab = paste0(V1, " (", per, "%)"))
+```
+
+
+# Forward- and backward-filling
+
+## Filling backward/forward for numeric factors (41)
+```{r}
+# creating lists of numeric traits
+numeric_biomarkers <- traits %>% 
+  select_if(is.numeric) %>% 
+  select(contains("resid")) %>% 
+  colnames()
+
+# creating an output df for the new values
+numeric_output <-data.frame(matrix(ncol = length(numeric_biomarkers), nrow = nrow(traits)))
+colnames(numeric_output) <- numeric_biomarkers
+
+# for each numeric trait, if the trait is NA, fill in with the next or previous or take the mean
+# new output is in the numeric_output df
+for (i in 1:length(numeric_biomarkers)) {
+df <- traits %>% 
+  group_by(anon_sname) %>% 
+  select(anon_sname, as.name(numeric_biomarkers[i]))
+colnames(df) <- c("anon_sname", "trait")
+
+df <- df %>%
+  mutate(next_trait = lead(trait),
+         prev_trait = lag(trait)) %>% 
+  mutate(new_trait = case_when(!is.na(trait) ~ trait,
+                            is.na(trait) & is.na(prev_trait) & !is.na(next_trait) ~ next_trait,
+                            is.na(trait) & !is.na(prev_trait) & is.na(next_trait) ~ prev_trait,
+                            is.na(trait) & !is.na(prev_trait) & !is.na(next_trait) ~ 
+                                            (prev_trait + next_trait)/2))
+
+numeric_output[,i] <- df$new_trait
+}
+```
+
+## Filling backward/forward for factors
+```{r}
+factor_biomarkers <- traits %>% 
+  select(!contains("resid")) %>% 
+  select(any_misc:puncture_cat) %>% 
+  colnames()
+
+# assigning a random a/b to each row so we can randomize whether we fill forwards or backwards for the factors
+traits <- traits %>% 
+  ungroup() %>% 
+  mutate(group = sample(c('A','B'), size = nrow(traits), prob = c(0.5,0.5), replace = TRUE))
+ 
+# creating an output df for the new values
+factor_output <-data.frame(matrix(ncol = length(factor_biomarkers), nrow = nrow(traits)))
+colnames(factor_output) <- factor_biomarkers
+
+# for each factor, if the trait is NA, fill in with the next or previous
+# new output is in the factor_output df
+for (i in 1:length(factor_biomarkers)) {
+df <- traits %>% 
+  group_by(anon_sname) %>% 
+  select(anon_sname, group, as.name(factor_biomarkers[i]))
+colnames(df) <- c("anon_sname", "group", "trait")
+
+df <- df %>%
+  mutate(next_trait = lead(trait),
+         prev_trait = lag(trait)) %>% 
+  mutate(new_trait = case_when(!is.na(trait) ~ trait,
+                            is.na(trait) & is.na(prev_trait) & !is.na(next_trait) ~ next_trait,
+                            is.na(trait) & !is.na(prev_trait) & is.na(next_trait) ~ prev_trait,
+                            is.na(trait) & !is.na(prev_trait) & !is.na(next_trait) & group == "A" ~ 
+                                            next_trait,
+                            is.na(trait) & !is.na(prev_trait) & !is.na(next_trait) & group == "B" ~ 
+                                            prev_trait))
+
+factor_output[,i] <- df$new_trait
+}
+```
+
+# New data
+```{r}
+backfill_data <- traits %>% 
+  select(anon_sname:statdate, na_count, yol, group) %>% 
+  cbind(numeric_output) %>% 
+  cbind(factor_output)
+```
+
+
+## Removing all rows (even finals) if there are more than 34 biomarkers missing
+```{r}
+backfill_data <- backfill_data %>% 
+  filter(na_count < 34)
+# removed 68 rows
+# N = 2402
+
+backfill_data %>% 
+  ggplot() +
+  geom_histogram(aes(x=na_count), binwidth = 1) +
+  theme_bw()
+```
+
+## Removing unnecessary columns
+```{r}
+backfill_data <- backfill_data %>% 
+  select(-c(birth:group))
+```
+

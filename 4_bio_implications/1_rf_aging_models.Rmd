@@ -1,0 +1,662 @@
+---
+title: "Random Forest - biological implications of aging"
+author: "Chelsea Weibel"
+date: "4/17/2024"
+output:
+  html_document:
+    theme: sandstone
+    highlight: tango
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages
+```{r}
+library(tidyverse)
+library(gridExtra)
+library(lme4)
+library(lmerTest)
+library(survival)
+require(RColorBrewer)
+library(survminer)
+```
+
+
+# Loading data
+```{r}
+# rf data
+rf_avg_predictions <- read_csv("../1_data/rf_avg_predictions.csv")
+
+adversity_covariates <- read_csv("../1_data/adversity_covariates.csv")
+
+# combining data frames and selecting columns of interest
+data_bioage <- rf_avg_predictions %>% 
+  select(anon_sname, age_year, bio_age = avg_bio_age) %>% 
+  left_join(select(adversity_covariates, anon_sname, 
+                   birth, age_year, 
+                   statdate, status, age_at_statdate,
+                   mom_rank_birth, group_size_birth, mom_sci,
+                   mom_rank_birth_cat, group_size_birth_cat, mom_sci_cat,
+                   mom_death_cat, competing_sibling_cat, drought_cat,
+                   cumulative_adversity, cumulative_adversity_three_plus,
+                   avg_ordrank, avg_proprank,
+                   rain_anom,
+                   avg_group_size),
+            by=c("anon_sname", "age_year"))
+```
+
+
+# Data formatting
+
+## Calculating delta age
+```{r}
+###################### DELTA AGE
+# creating the delta age columns
+# biological - chronological (pos = old, neg = young)
+data_bioage <- data_bioage %>% 
+# calculating delta age
+  mutate(delta_age = bio_age - age_year)
+
+
+# Average delta age per individual
+ind_data <- data_bioage %>% 
+  group_by(anon_sname, birth, statdate, status, age_at_statdate) %>% 
+  dplyr::summarize(avg_delta_age = as.numeric(mean(delta_age)),
+                   avg_age = as.numeric(mean(age_year)))
+```
+
+## Combining with EA and other covariates
+```{r}
+# creating an ea file for each individual (removes duplicate rows for each individual)
+ea <- adversity_covariates %>% 
+  select(anon_sname, mom_rank_birth:cumulative_adversity_three_plus) %>% 
+  distinct() %>% 
+  mutate(cumulative_adversity_three_plus_categorical = as.factor(cumulative_adversity_three_plus))
+
+covariates_avg <- adversity_covariates %>% 
+  select(anon_sname, avg_ordrank, avg_proprank, rain_anom, avg_group_size) %>% 
+  group_by(anon_sname) %>% 
+  dplyr::summarize(overall_avg_ordrank = mean(avg_ordrank),
+            overall_avg_proprank = mean(avg_proprank),
+            overall_rain_anom = mean(rain_anom),
+            overall_avg_group_size = mean(avg_group_size))
+
+ind_data <- ind_data %>% 
+  left_join(select(ea, anon_sname, mom_rank_birth, group_size_birth, mom_sci,
+                   mom_rank_birth_cat, group_size_birth_cat, mom_sci_cat,
+                   mom_death_cat, competing_sibling_cat, drought_cat,
+                   cumulative_adversity:cumulative_adversity_three_plus_categorical),
+            by=c("anon_sname")) %>% 
+  left_join(covariates_avg, by="anon_sname")
+
+# creating a subset data frame where there's no missing CEA info
+ind_data_cea <- ind_data %>% 
+  filter(!is.na(cumulative_adversity_three_plus))
+# 256 individuals
+
+ind_data_cea %>% 
+  group_by(cumulative_adversity) %>% 
+  dplyr::summarize(n = n()) %>% 
+  mutate(per = n / 256)
+```
+
+
+# Does adversity predict delta age?
+
+## Average per individual
+
+### Cumulative adversity
+```{r}
+# model
+cea_mod <- lm(avg_delta_age ~ cumulative_adversity_three_plus + 
+                avg_age + overall_avg_proprank + overall_rain_anom + overall_avg_group_size, data=ind_data_cea)
+summary(cea_mod)
+```
+
+
+#### Plot
+```{r}
+# CEA plots with residuals as y-axis
+
+# redoing model without CEA in it
+no_cea_mod <- lm(avg_delta_age ~ avg_age + overall_avg_proprank + overall_rain_anom + overall_avg_group_size, data=ind_data_cea)
+summary(no_cea_mod)
+
+# extracting the residuals
+ind_data_cea$delta_age_resid_no_cea = resid(no_cea_mod)
+
+# scatter
+ind_data_cea %>% 
+  ggplot(aes(x=cumulative_adversity_three_plus, y=delta_age_resid_no_cea)) +
+  geom_jitter() +
+  geom_smooth(method="lm") +
+  theme_bw() +
+  xlab("cumulative adversity") +
+  ylab("delta age residuals") +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+# boxplot
+ind_data_cea %>% 
+  ggplot(aes(x=cumulative_adversity_three_plus_categorical, y=delta_age_resid_no_cea)) +
+  geom_jitter(aes(color=cumulative_adversity_three_plus_categorical)) +
+  geom_boxplot(outlier.shape=NA, fill=NA) +
+  theme_bw() +
+  xlab("Cumulative adversity") +
+  ylab("Delta age, controlling for chronological age") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("0" = "#3E76A7",
+                              "1" = "#A5C6D9", 
+                              "2" = "#DE9B34",
+                              "3" = "#B32A06")) +
+  scale_x_discrete(labels=c("0" = "0", "1" = "1",
+                              "2" = "2", "3" = "3+"))
+```
+
+### Individual sources of adversity
+```{r}
+# model
+iea_mod <- lm(avg_delta_age ~ mom_rank_birth + group_size_birth + mom_sci + 
+                mom_death_cat + competing_sibling_cat + drought_cat + 
+                avg_age +
+                overall_avg_proprank + overall_rain_anom + overall_avg_group_size, data=ind_data_cea)
+summary(iea_mod)
+```
+
+#### All categorical
+```{r}
+# model
+iea_mod_allcat <- lm(avg_delta_age ~ mom_rank_birth_cat + group_size_birth_cat + mom_sci_cat + 
+                mom_death_cat + competing_sibling_cat + drought_cat + 
+                avg_age +
+                overall_avg_proprank + overall_rain_anom + overall_avg_group_size, data=ind_data_cea)
+summary(iea_mod_allcat)
+```
+
+
+#### Residuals adversity
+```{r}
+# plots with residuals for y axis
+
+# first redoing the model without adversity so I can take residuals
+no_iea_mod <- lm(avg_delta_age ~ avg_age +
+                overall_avg_proprank + overall_rain_anom + overall_avg_group_size, data=ind_data_cea)
+summary(no_iea_mod)
+
+# extracting the residuals
+ind_data_cea$delta_age_resid_no_iea = resid(no_iea_mod)
+```
+
+
+## Yearly measure
+
+```{r}
+data_bioage_cea <- data_bioage %>% 
+  filter(!is.na(cumulative_adversity_three_plus))
+```
+
+### Cumulative adversity (Table S6)
+```{r}
+# model
+cea_mod_yearly <- lmer(delta_age ~ cumulative_adversity_three_plus + 
+                age_year + avg_proprank + rain_anom + avg_group_size + 
+                  (1|anon_sname),
+                data=data_bioage_cea)
+summary(cea_mod_yearly)
+```
+
+#### Figure 4
+```{r, fig.height=4, fig.width=6}
+cea_mod_yearly_nocea <- lmer(delta_age ~ age_year + avg_proprank + rain_anom + avg_group_size +
+                               (1|anon_sname),
+                             data=data_bioage_cea)
+data_bioage_cea$cea_yearly_resid = resid(cea_mod_yearly_nocea)
+
+
+cea_delta_age_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=as.factor(cumulative_adversity_three_plus), y=cea_yearly_resid)) +
+  geom_jitter(aes(color=as.factor(cumulative_adversity_three_plus))) +
+  geom_boxplot(outlier.shape=NA, fill=NA) +
+  theme_bw() +
+  xlab("Cumulative adversity") +
+  ylab("Delta age, controlling for covariates") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("0" = "#3E76A7",
+                              "1" = "#A5C6D9", 
+                              "2" = "#DE9B34",
+                              "3" = "#B32A06")) +
+  scale_x_discrete(labels=c("0" = "0", "1" = "1",
+                              "2" = "2", "3" = "3+"))
+cea_delta_age_yearly
+```
+
+### Individual sources of adversity (Table S7)
+```{r}
+# model
+iea_mod_yearly <- lmer(delta_age ~ mom_rank_birth + group_size_birth + mom_sci + 
+                mom_death_cat + competing_sibling_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), data=data_bioage_cea)
+summary(iea_mod_yearly)
+```
+
+#### Figure S10
+```{r}
+# plots with residuals for y axis, creating a separate model for each source of adversity
+# MOM RANK
+no_mom_rank_mod_yearly <- lmer(delta_age ~ group_size_birth + mom_sci + mom_death_cat + competing_sibling_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), data=data_bioage_cea)
+summary(no_mom_rank_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_mom_rank_yearly = resid(no_mom_rank_mod_yearly)
+
+mom_rank_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=mom_rank_birth, y=delta_age_resid_no_mom_rank_yearly)) +
+  geom_jitter() +
+  geom_smooth(method="lm") +
+  theme_bw() +
+  xlab("Maternal rank") +
+  ylab("Residuals of delta age") +
+  ggtitle("Maternal rank") +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+
+# GROUP SIZE
+no_goup_size_mod_yearly <- lmer(delta_age ~ mom_rank_birth + mom_sci + mom_death_cat + competing_sibling_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), 
+                data=data_bioage_cea)
+summary(no_goup_size_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_group_size_yearly = resid(no_goup_size_mod_yearly)
+
+group_size_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=group_size_birth, y=delta_age_resid_no_group_size_yearly)) +
+  geom_jitter() +
+  geom_smooth(method="lm") +
+  theme_bw() +
+  xlab("Group size") +
+  ylab("Residuals of delta age") +
+  ggtitle("Group size") +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+
+# SCI
+no_sci_mod_yearly <- lmer(delta_age ~ mom_rank_birth + group_size_birth + mom_death_cat + competing_sibling_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), 
+                data=data_bioage_cea)
+summary(no_sci_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_sci_yearly = resid(no_sci_mod_yearly)
+
+maternal_sci_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=mom_sci, y=delta_age_resid_no_sci_yearly)) +
+  geom_jitter() +
+  geom_smooth(method="lm") +
+  theme_bw() +
+  xlab("Maternal social isolation") +
+  ylab("Residuals of delta age") +
+  ggtitle("Maternal social isolation") +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+
+# MATERNAL DEATH
+no_maternal_death_mod_yearly <- lmer(delta_age ~ mom_rank_birth + group_size_birth + mom_sci + competing_sibling_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname),
+                data=data_bioage_cea)
+summary(no_maternal_death_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_maternal_death_yearly = resid(no_maternal_death_mod_yearly)
+
+maternal_death_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=as.factor(mom_death_cat), y=delta_age_resid_no_maternal_death_yearly)) +
+  geom_jitter(aes(color=as.factor(mom_death_cat))) +
+  geom_boxplot(outlier.shape=NA, fill=NA) +
+  theme_bw() +
+  xlab("Maternal death") +
+  ylab("Residuals of delta age") +
+  ggtitle("Maternal death") +
+  scale_color_manual(values=c("0" = "#3E76A7",
+                              "1" = "#B32A06")) +
+  theme(legend.position="none") +
+  scale_x_discrete(labels = c("0" = "no",
+                              "1" = "yes")) +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+
+# COMPETING SIBLING
+no_competing_sibling_mod_yearly <- lmer(delta_age ~ mom_rank_birth + group_size_birth + mom_sci + mom_death_cat + drought_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), 
+                data=data_bioage_cea)
+summary(no_competing_sibling_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_competing_sibling_yearly = resid(no_competing_sibling_mod_yearly)
+
+competing_sibling_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=as.factor(competing_sibling_cat), y=delta_age_resid_no_competing_sibling_yearly)) +
+  geom_jitter(aes(color=as.factor(competing_sibling_cat))) +
+  geom_boxplot(outlier.shape=NA, fill=NA) +
+  theme_bw() +
+  xlab("Close-in-age sibling") +
+  ylab("Residuals of delta age") +
+  ggtitle("Close-in-age sibling") +
+  scale_color_manual(values=c("0" = "#3E76A7",
+                              "1" = "#B32A06")) +
+  theme(legend.position="none") +
+  scale_x_discrete(labels = c("0" = "no",
+                              "1" = "yes")) +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+
+
+# DROUGHT
+no_drought_mod_yearly <- lmer(delta_age ~ mom_rank_birth + group_size_birth + mom_sci + mom_death_cat + competing_sibling_cat + 
+                age_year + avg_proprank + rain_anom + avg_group_size +
+                  (1|anon_sname), 
+                data=data_bioage_cea)
+summary(no_drought_mod_yearly)
+
+# extracting the residuals
+data_bioage_cea$delta_age_resid_no_drought_yearly = resid(no_drought_mod_yearly)
+
+rainfall_rf_resid2_yearly <- data_bioage_cea %>% 
+  ggplot(aes(x=as.factor(drought_cat), y=delta_age_resid_no_drought_yearly)) +
+  geom_jitter(aes(color=as.factor(drought_cat))) +
+  geom_boxplot(outlier.shape=NA, fill=NA) +
+  theme_bw() +
+  xlab("Drought") +
+  ylab("Residuals of delta age") +
+  ggtitle("Drought") +
+  scale_color_manual(values=c("0" = "#3E76A7",
+                              "1" = "#B32A06")) +
+  theme(legend.position="none") +
+  scale_x_discrete(labels = c("0" = "no",
+                              "1" = "yes")) +
+  scale_y_continuous(limits=c(-2,3), breaks=seq(-2, 3, 1))
+```
+
+```{r, fig.width=10, fig.height=6}
+ind_adv_delta_age_yearly <- grid.arrange(mom_rank_rf_resid2_yearly, group_size_rf_resid2_yearly, maternal_sci_rf_resid2_yearly, maternal_death_rf_resid2_yearly, competing_sibling_rf_resid2_yearly, rainfall_rf_resid2_yearly, nrow=2)
+```
+
+
+# Survival analysis
+```{r}
+survival <- ind_data %>%
+# creating a censored/dead column
+# 2 = dead, 1 = censored
+  mutate(censor_dead = ifelse(status == 1, 2, 1))
+# 162 individuals dead, 157 censored
+
+```
+
+## Delta age
+
+### Average across lifespan
+```{r}
+survival %>% 
+  ggplot(aes(x=avg_age, y=avg_delta_age)) +
+  geom_point()
+
+
+# running a linear model of avg_delta_age and avg age so that we can control for avg age without having it in the model
+delta_age_resid_mod <- lm(delta_age ~ age_year, data = data_bioage)
+# extracting the residuals
+data_bioage$delta_age_resid = resid(delta_age_resid_mod)
+
+# taking the average across individuals
+avg_df <- data_bioage %>% 
+  group_by(anon_sname) %>% 
+  dplyr::summarize(avg_delta_age_resid = mean(delta_age_resid))
+
+
+# and then merging with the survivals df
+survival <- survival %>% 
+  left_join(avg_df)
+
+
+# running the model
+delta_age_survival_model <- coxph(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid, data=survival)
+print(summary(delta_age_survival_model),digits=10)
+
+# testing proportional hazards assumption
+cox.zph(delta_age_survival_model)
+# assumptions are met
+
+
+
+
+# creating quantiles for delta age residuals
+survival <- survival %>% 
+  mutate(avg_delta_age_resid_quant = case_when(
+    avg_delta_age_resid <= unname(quantile(survival$avg_delta_age_resid, 0.25)) ~ 1,
+    avg_delta_age_resid > unname(quantile(survival$avg_delta_age_resid, 0.25)) & 
+                      avg_delta_age_resid <= unname(quantile(survival$avg_delta_age_resid, 0.50)) ~ 2,
+    avg_delta_age_resid > unname(quantile(survival$avg_delta_age_resid, 0.50)) & 
+                      avg_delta_age_resid <= unname(quantile(survival$avg_delta_age_resid, 0.75)) ~ 3,
+    avg_delta_age_resid > unname(quantile(survival$avg_delta_age_resid, 0.75)) ~ 4))
+
+# quartile cutoffs
+quantile(survival$avg_delta_age_resid)
+
+
+# running the model
+delta_age_survival_model_quant <- coxph(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid_quant, data=survival)
+print(summary(delta_age_survival_model_quant),digits=10)
+cox.zph(delta_age_survival_model_quant)
+# assumptions are met
+
+survfit(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid_quant, data=survival)
+
+
+# adversity colors
+require(RColorBrewer)
+cols<-rev(brewer.pal(4,"RdYlBu"))
+
+# quartile colors
+cols_quart <- c("#456990", "#88AB75", "#F39237", "#D81159") 
+
+# creating and saving this survival plot
+#pdf("plots/FigS1.pdf", height = 6, width = 5)
+plot(survfit(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid_quant, data=survival),
+     mark.time=F,
+     col=cols_quart,
+     frame.plot=F,
+     lwd=3,
+     xlab='Age (years)',
+     ylab='Proportion surviving',
+     cex.lab=1.5,
+     cex.axis=1.5,
+     #firstx=4,
+     xlim=c(4,30))
+legend("topright",c("Q1 - look youngest for age","Q2 - look slightly young for age","Q3 - look slightly old for age","Q4 - look oldest for age"),fill=cols_quart,bty="n",cex=0.9,border=NA,title='Lifetime delta age quartile')
+```
+
+
+#### Figure 3A
+
+```{r, fig.height=4, fig.width=5.5}
+lifetime_fit <- survfit(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid_quant, data=survival)
+lifetime_plot <- ggsurvplot(lifetime_fit, data = survival,
+           ggtheme = theme_bw(base_size = 14),
+          # surv.median.line = "hv",
+           legend.title = "Delta age quartile",
+           legend.labs = c("Q1", "Q2", "Q3", "Q4"),
+           palette = c("#456990", "#88AB75", "#F39237", "#D81159"),
+           xlab = "Age (years)",
+          ## Add risk table
+ #risk.table = TRUE,
+ #tables.height = 0.2,
+ #tables.theme = theme_cleantable(),
+          #conf.int = T,
+          #pval = T,
+          legend = "right",
+          censor = F,
+ xlim = c(4,28)) +
+  ggtitle("Lifetime delta age")
+lifetime_plot
+```
+
+
+#### Average across lifespan, including EA (Table S8)
+```{r}
+# first subsetting the data
+survival_ea <- survival %>% 
+  filter(!is.na(cumulative_adversity_three_plus)) %>% 
+  select(-avg_delta_age_resid, -avg_delta_age_resid_quant)
+
+# came as data_bioage_cea, but I already made it, so we'll use it
+data_bioage_ea <- data_bioage %>% 
+  filter(anon_sname %in% survival_ea$anon_sname) %>% 
+  select(-delta_age_resid)
+
+
+# running a linear model of delta_age and age so that we can control for age without having it in the model
+delta_age_resid_mod2 <- lm(delta_age ~ age_year, data = data_bioage_ea)
+# extracting the residuals
+data_bioage_ea$delta_age_resid_ea = resid(delta_age_resid_mod2)
+
+
+# taking the average across individuals
+avg_df_ea <- data_bioage_ea %>% 
+  group_by(anon_sname) %>% 
+  dplyr::summarize(avg_delta_age_resid_ea = mean(delta_age_resid_ea))
+
+
+# and then merging with the survivals df
+survival_ea <- survival_ea %>% 
+  left_join(avg_df_ea)
+
+
+# checking for correlations and VIF
+cor(survival_ea$avg_delta_age_resid_ea, survival_ea$cumulative_adversity_three_plus)
+survival_ea %>% 
+  ggplot(aes(x=cumulative_adversity_three_plus, y=avg_delta_age_resid_ea)) +
+  geom_jitter() +
+  geom_smooth(method="lm")
+
+
+
+# running the model
+delta_age_survival_model2 <- coxph(Surv(age_at_statdate, censor_dead) ~ avg_delta_age_resid_ea + cumulative_adversity_three_plus, data=survival_ea)
+print(summary(delta_age_survival_model2),digits=10)
+cox.zph(delta_age_survival_model2)
+```
+
+
+### Time-varying
+https://stats.oarc.ucla.edu/r/dae/mixed-effects-cox-regression/
+```{r}
+data_bioage <- data_bioage %>% 
+# creating an end date for each row
+  mutate(start = age_year,
+         end = age_year + 1) %>% 
+# creating a survival column
+# IDing last rows
+  mutate(last_row = age_at_statdate - end) %>% 
+  mutate(survival = ifelse(last_row < 0 & status == 1, 1, 0)) %>% 
+# we have info during the last year of life for 113 individuals
+# since we don't have data for the last year of life for all individuals (partly because they didn't survive the whole year so we don't have enough info for them, going to count the last year of life as any year when it's 1/2 year before death or later)
+# first calculating the min last_row for each individual
+  group_by(anon_sname) %>% 
+  mutate(min_last_row = min(last_row)) %>% 
+  mutate(survival2 = ifelse(min_last_row == last_row & last_row < 0.5 & status == 1, 1, 0)) %>% 
+# WE DECIDED WE WANT THE LAST ROW TO END WITH THE DATE THAT THEY DIED
+  mutate(end2 = ifelse(survival2 == 1, age_at_statdate, end))
+```
+
+
+```{r}
+# with the second survival column
+survmod2 <- coxph(Surv(start, end2, survival2) ~ delta_age + age_year + cluster(anon_sname), data=data_bioage)
+summary(survmod2)
+```
+
+#### With residuals (second survival column)
+```{r}
+survmod_resid <- coxph(Surv(start, end2, survival2) ~ delta_age_resid + cluster(anon_sname), data=data_bioage)
+summary(survmod_resid)
+cox.zph(survmod_resid)
+
+summary(data_bioage$delta_age_resid)
+```
+
+
+#### Include EA (Table S9)
+```{r}
+data_bioage_ea <- data_bioage_ea %>% 
+  left_join(select(data_bioage, anon_sname, age_year, start, end2, survival2), by = c("anon_sname", "age_year"))
+
+survmod_resid_ea <- coxph(Surv(start, end2, survival2) ~ delta_age_resid_ea + cumulative_adversity_three_plus + cluster(anon_sname), data=data_bioage_ea)
+summary(survmod_resid_ea)
+cox.zph(survmod_resid_ea)
+```
+
+
+#### Categorical (second survival column)
+```{r}
+# CREATING A QUANTILES COLUMN AND MODEL SO I CAN PLOT THE EFFECTS
+data_bioage <- data_bioage %>% 
+  mutate(delta_age_resid_quant = case_when(
+    delta_age_resid <= unname(quantile(data_bioage$delta_age_resid, 0.25)) ~ 1,
+    delta_age_resid > unname(quantile(data_bioage$delta_age_resid, 0.25)) & 
+                      delta_age_resid <= unname(quantile(data_bioage$delta_age_resid, 0.50)) ~ 2,
+    delta_age_resid > unname(quantile(data_bioage$delta_age_resid, 0.50)) & 
+                      delta_age_resid <= unname(quantile(data_bioage$delta_age_resid, 0.75)) ~ 3,
+    delta_age_resid > unname(quantile(data_bioage$delta_age_resid, 0.75)) ~ 4))
+
+
+data_bioage %>% 
+  group_by(delta_age_resid_quant) %>% 
+  dplyr::summarize(avg_delta_age_resid = mean(delta_age_resid),
+            min_delta_age_resid = min(delta_age_resid),
+            max_delta_age_resid = max(delta_age_resid))
+
+
+# creating a categorical model so I can plot
+survmod_resid_cat <- coxph(Surv(start, end2, survival2) ~ as.factor(delta_age_resid_quant) + cluster(anon_sname), data=data_bioage)
+summary(survmod_resid_cat)
+cox.zph(survmod_resid_cat)
+
+survfit(Surv(start, end2, survival2) ~ as.factor(delta_age_resid_quant), data=data_bioage)
+
+```
+
+#### Figure 3B
+```{r, fig.height=4, fig.width=5.5}
+# https://rpkgs.datanovia.com/survminer/reference/ggsurvplot.html#plot-title-and-axis-labels
+yearly_fit <- survfit(Surv(start, end2, survival2) ~ as.factor(delta_age_resid_quant), data=data_bioage)
+yearly_plot <- ggsurvplot(yearly_fit, data = data_bioage,
+           ggtheme = theme_bw(base_size = 14),
+           #surv.median.line = "hv",
+           legend.title = "Delta age quartile",
+           legend.labs = c("Q1", "Q2", "Q3", "Q4"),
+           palette = c("#456990", "#88AB75", "#F39237", "#D81159"),
+           xlab = "Age (years)",
+          ## Add risk table
+ #risk.table = TRUE,
+ #tables.height = 0.2,
+ #tables.theme = theme_cleantable(),
+          #conf.int = T,
+          #pval = T,
+          legend = "right",
+          censor = F,
+ xlim = c(4,28)) +
+  ggtitle("Yearly delta age")
+yearly_plot
+```
+
+
+

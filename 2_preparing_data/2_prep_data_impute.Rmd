@@ -1,0 +1,830 @@
+---
+title: "Preparing data for imputation"
+author: "Chelsea Weibel"
+date: "4/17/2024"
+output:
+  html_document:
+    theme: sandstone
+    highlight: tango
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(Hmisc)
+library(gridExtra)
+```
+
+# Loading & formatting data
+
+```{r}
+data <- read_csv("../1_data/backfill_data.csv")
+```
+
+# Areg Impute 5x
+
+THIS LINK SAYS TO SPLIT, IMPUTE, AND THEN STANDARDIZE
+https://datascience.stackexchange.com/questions/53138/which-comes-first-multiple-imputation-splitting-into-train-test-or-standardiz
+
+## SPLIT DATA
+
+```{r}
+set.seed(123)
+
+# creating folds vector
+# creating a vector for the folds
+folds <- rep(c(1:5), times = 480)
+folds <- c(folds, 1, 2)
+# total length is 2402
+
+# merging with the scaled data frame
+data <- data %>% 
+  arrange(anon_sname, age_year) %>% 
+  cbind(folds)
+
+
+# 1
+test1 <- data %>% 
+  filter(folds == 1) %>% 
+  select(-folds)
+# 2
+test2 <- data %>% 
+  filter(folds == 2) %>% 
+  select(-folds)
+# 3 
+test3 <- data %>% 
+  filter(folds == 3) %>% 
+  select(-folds)
+# 4
+test4 <- data %>% 
+  filter(folds == 4) %>% 
+  select(-folds)
+# 5
+test5 <- data %>% 
+  filter(folds == 5) %>% 
+  select(-folds)
+
+# 1 
+train1 <- data %>% 
+  filter(folds != 1) %>% 
+  select(-folds)
+# 2
+train2 <- data %>% 
+  filter(folds != 2) %>% 
+  select(-folds)
+# 3 
+train3 <- data %>% 
+  filter(folds != 3) %>% 
+  select(-folds)
+# 4
+train4 <- data %>% 
+  filter(folds != 4) %>% 
+  select(-folds)
+# 5
+train5 <- data %>% 
+  filter(folds != 5) %>% 
+  select(-folds)
+```
+
+## IMPUTE
+
+### TEST DF
+
+```{r}
+set.seed(123)
+
+############### TEST 1
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=test1)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = test1, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = test1, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+test1.1 <- fill_data(im = 1)
+test1.2 <- fill_data(im = 2)
+test1.3 <- fill_data(im = 3)
+test1.4 <- fill_data(im = 4)
+test1.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+test1.1 <- test1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test1.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+test1.2 <- test1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test1.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+test1.3 <- test1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test1.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+test1.4 <- test1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test1.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+test1.5 <- test1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test1.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TEST 2
+set.seed(123)
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=test2)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = test2, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = test2, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+test2.1 <- fill_data(im = 1)
+test2.2 <- fill_data(im = 2)
+test2.3 <- fill_data(im = 3)
+test2.4 <- fill_data(im = 4)
+test2.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+test2.1 <- test2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test2.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+test2.2 <- test2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test2.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+test2.3 <- test2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test2.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+test2.4 <- test2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test2.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+test2.5 <- test2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test2.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TEST 3
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=test3)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = test3, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = test3, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+test3.1 <- fill_data(im = 1)
+test3.2 <- fill_data(im = 2)
+test3.3 <- fill_data(im = 3)
+test3.4 <- fill_data(im = 4)
+test3.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+test3.1 <- test3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test3.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+test3.2 <- test3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test3.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+test3.3 <- test3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test3.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+test3.4 <- test3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test3.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+test3.5 <- test3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test3.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TEST 4
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=test4)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = test4, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = test4, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+test4.1 <- fill_data(im = 1)
+test4.2 <- fill_data(im = 2)
+test4.3 <- fill_data(im = 3)
+test4.4 <- fill_data(im = 4)
+test4.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+test4.1 <- test4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test4.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+test4.2 <- test4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test4.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+test4.3 <- test4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test4.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+test4.4 <- test4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test4.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+test4.5 <- test4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test4.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TEST 5
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=test5)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = test5, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = test5, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+test5.1 <- fill_data(im = 1)
+test5.2 <- fill_data(im = 2)
+test5.3 <- fill_data(im = 3)
+test5.4 <- fill_data(im = 4)
+test5.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+test5.1 <- test5 %>%
+   select(anon_sname, age_year) %>%
+  cbind(test5.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+test5.2 <- test5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test5.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+test5.3 <- test5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test5.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+test5.4 <- test5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test5.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+test5.5 <- test5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(test5.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+```
+
+### TRAIN DF
+
+```{r}
+############### TEST 1
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=train1)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = train1, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = train1, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+train1.1 <- fill_data(im = 1)
+train1.2 <- fill_data(im = 2)
+train1.3 <- fill_data(im = 3)
+train1.4 <- fill_data(im = 4)
+train1.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+train1.1 <- train1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train1.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+train1.2 <- train1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train1.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+train1.3 <- train1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train1.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+train1.4 <- train1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train1.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+train1.5 <- train1 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train1.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TRAIN 2
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=train2)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = train2, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = train2, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+train2.1 <- fill_data(im = 1)
+train2.2 <- fill_data(im = 2)
+train2.3 <- fill_data(im = 3)
+train2.4 <- fill_data(im = 4)
+train2.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+train2.1 <- train2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train2.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+train2.2 <- train2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train2.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+train2.3 <- train2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train2.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+train2.4 <- train2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train2.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+train2.5 <- train2 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train2.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TRAIN 3
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=train3)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = train3, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = train3, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+train3.1 <- fill_data(im = 1)
+train3.2 <- fill_data(im = 2)
+train3.3 <- fill_data(im = 3)
+train3.4 <- fill_data(im = 4)
+train3.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+train3.1 <- train3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train3.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+train3.2 <- train3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train3.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+train3.3 <- train3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train3.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+train3.4 <- train3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train3.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+train3.5 <- train3 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train3.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TRAIN 4
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=train4)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = train4, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = train4, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+train4.1 <- fill_data(im = 1)
+train4.2 <- fill_data(im = 2)
+train4.3 <- fill_data(im = 3)
+train4.4 <- fill_data(im = 4)
+train4.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+train4.1 <- train4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train4.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+train4.2 <- train4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train4.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+train4.3 <- train4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train4.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+train4.4 <- train4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train4.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+train4.5 <- train4 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train4.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+
+
+############### TRAIN 5
+f <- aregImpute(~avg_resid_log_gc + avg_resid_log_e + avg_resid_log_p + avg_resid_log_th + avg_log_trichuris_resid + avg_richness_resid + avg_log_cycling_resid + avg_preg_resid + sci_f_dir_resid + sci_f_rec_resid + sci_f_resid + sci_m_dir_resid+ sci_m_rec_resid + agi_f_dir_resid + agi_f_rec_resid + agi_f_resid + agi_m_rec_resid + agi_m_resid + dsi_f_resid + recip_m_resid + recip_f_resid + not_bonded_m_resid + not_bonded_f_resid + strongly_bonded_f_resid + weakly_bonded_f_resid + total_grooming_partners_f_resid + total_grooming_partners_resid + eigen_resid + per_groom_resid + per_be_groomed_infant_resid + per_kc_dorsal_resid + per_kc_ventral_resid + per_kc_support_resid + per_kc_away_none_resid + per_ks_suckle_resid + per_no_neighbors_resid + ni_per_groom_resid + ni_per_other_soc_resid + ni_per_rest_resid + ni_per_forage_resid + ni_per_no_neighbors_resid + any_misc + any_off_survive + avg_mom_rel_rank + rank_rel_any_daughter + cat_abs_active_rank_change + major_health_event_cat + limp_cat + puncture_cat, 
+                n.impute=5, 
+                nk=0, 
+                boot.method = 'simple', 
+                data=train5)
+# this function allow me to access the five different imputations that I created with aregImpute
+fill_data <- function(impute = f, data = train5, im = 1) {
+  cbind.data.frame(impute.transcan(x = impute, 
+                                   imputation = im, 
+                                   data = train5, 
+                                   list.out = TRUE, 
+                                   pr = FALSE))
+ }
+# Accessing the data frame
+train5.1 <- fill_data(im = 1)
+train5.2 <- fill_data(im = 2)
+train5.3 <- fill_data(im = 3)
+train5.4 <- fill_data(im = 4)
+train5.5 <- fill_data(im = 5)
+
+# these data frames don't have sname or age attached (but they're in the exact same order), so using cbind to add them
+train5.1 <- train5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train5.1) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.2
+train5.2 <- train5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train5.2) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.3
+train5.3 <- train5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train5.3) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.4
+train5.4 <- train5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train5.4) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+# 1.5
+train5.5 <- train5 %>%
+  select(anon_sname, age_year) %>%
+  cbind(train5.5) %>% 
+# converting all the imputed columns to numerics
+  mutate_at(2:43, as.numeric) %>% 
+  mutate_at(44:51, as.factor)
+```
+
+
+
+## STANDARDIZE
+
+```{r}
+dfList <- list(test1.1=test1.1,
+               test1.2=test1.2,
+               test1.3=test1.3,
+               test1.4=test1.4,
+               test1.5=test1.5,
+               train1.1=train1.1,
+               train1.2=train1.2,
+               train1.3=train1.3,
+               train1.4=train1.4,
+               train1.5=train1.5,
+               
+               test2.1=test2.1,
+               test2.2=test2.2,
+               test2.3=test2.3,
+               test2.4=test2.4,
+               test2.5=test2.5,
+               train2.1=train2.1,
+               train2.2=train2.2,
+               train2.3=train2.3,
+               train2.4=train2.4,
+               train2.5=train2.5,
+               
+               test3.1=test3.1,
+               test3.2=test3.2,
+               test3.3=test3.3,
+               test3.4=test3.4,
+               test3.5=test3.5,
+               train3.1=train3.1,
+               train3.2=train3.2,
+               train3.3=train3.3,
+               train3.4=train3.4,
+               train3.5=train3.5,
+               
+               test4.1=test4.1,
+               test4.2=test4.2,
+               test4.3=test4.3,
+               test4.4=test4.4,
+               test4.5=test4.5,
+               train4.1=train4.1,
+               train4.2=train4.2,
+               train4.3=train4.3,
+               train4.4=train4.4,
+               train4.5=train4.5,
+               
+               test5.1=test5.1,
+               test5.2=test5.2,
+               test5.3=test5.3,
+               test5.4=test5.4,
+               test5.5=test5.5,
+               train5.1=train5.1,
+               train5.2=train5.2,
+               train5.3=train5.3,
+               train5.4=train5.4,
+               train5.5=train5.5)
+
+               
+dfList <- lapply(dfList, function(df) {
+    # Converting age to a factor so that I don't standardize it
+  df$age_year <- as.factor(df$age_year)
+  df$anon_sname <- as.factor(df$anon_sname)
+  
+  # mutating everything that's a numeric
+  df <- df %>%
+    mutate_if(is.numeric, scale)
+  
+  # Converting age back to a numeric
+  df$age_year <- as.numeric(as.character(df$age_year))
+    df
+})
+
+    test1.1 <- dfList$test1.1
+               test1.2=dfList$test1.2
+               test1.3=dfList$test1.3
+               test1.4=dfList$test1.4
+               test1.5=dfList$test1.5
+               train1.1=dfList$train1.1
+               train1.2=dfList$train1.2
+               train1.3=dfList$train1.3
+               train1.4=dfList$train1.4
+               train1.5=dfList$train1.5
+               
+               test2.1=dfList$test2.1
+               test2.2=dfList$test2.2
+               test2.3=dfList$test2.3
+               test2.4=dfList$test2.4
+               test2.5=dfList$test2.5
+               train2.1=dfList$train2.1
+               train2.2=dfList$train2.2
+               train2.3=dfList$train2.3
+               train2.4=dfList$train2.4
+               train2.5=dfList$train2.5
+               
+               test3.1=dfList$test3.1
+               test3.2=dfList$test3.2
+               test3.3=dfList$test3.3
+               test3.4=dfList$test3.4
+               test3.5=dfList$test3.5
+               train3.1=dfList$train3.1
+               train3.2=dfList$train3.2
+               train3.3=dfList$train3.3
+               train3.4=dfList$train3.4
+               train3.5=dfList$train3.5
+               
+               test4.1=dfList$test4.1
+               test4.2=dfList$test4.2
+               test4.3=dfList$test4.3
+               test4.4=dfList$test4.4
+               test4.5=dfList$test4.5
+               train4.1=dfList$train4.1
+               train4.2=dfList$train4.2
+               train4.3=dfList$train4.3
+               train4.4=dfList$train4.4
+               train4.5=dfList$train4.5
+               
+               test5.1=dfList$test5.1
+               test5.2=dfList$test5.2
+               test5.3=dfList$test5.3
+               test5.4=dfList$test5.4
+               test5.5=dfList$test5.5
+               train5.1=dfList$train5.1
+               train5.2=dfList$train5.2
+               train5.3=dfList$train5.3
+               train5.4=dfList$train5.4
+               train5.5=dfList$train5.5
+```
+
+# How many cells were missing?
+```{r}
+missing_cells <- data %>% 
+  select(avg_resid_log_gc:puncture_cat)
+
+n_missing_cells <- sum(is.na(missing_cells))
+total_cells <- 2402 * 49
+
+n_missing_cells/total_cells
+```
+
